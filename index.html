@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>San Marino · Calendário</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: { slate: { 950: '#020817' } },
+      fontFamily: { sans: ["DM Sans","system-ui","sans-serif"], mono: ["DM Mono","monospace"] }
+    }
+  }
+}
+</script>
+<style>
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: #020817; font-family: 'DM Sans', system-ui, sans-serif; overscroll-behavior: none; }
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 2px; }
+select option { background: #1e293b; color: #e2e8f0; }
+textarea { resize: none; }
+input, select, textarea, button { -webkit-appearance: none; font-family: inherit; }
+
+.sheet-overlay { position: fixed; inset: 0; background: rgba(2,8,23,.75); backdrop-filter: blur(4px); z-index: 40; animation: fadeIn .2s ease; }
+.sheet-panel { position: fixed; bottom: 0; left: 0; right: 0; background: #0f172a; border-top: 1px solid #1e293b; border-radius: 20px 20px 0 0; z-index: 50; max-height: 92vh; display: flex; flex-direction: column; animation: slideUp .25s cubic-bezier(.32,1,.32,1); }
+.sheet-drag { width: 36px; height: 4px; background: #334155; border-radius: 2px; margin: 12px auto 0; flex-shrink: 0; }
+
+.sidebar-panel { position: sticky; top: 57px; height: calc(100vh - 57px); width: 360px; flex-shrink: 0; border-left: 1px solid #1e293b; background: rgba(15,23,42,.8); display: flex; flex-direction: column; overflow-y: auto; animation: slideInRight .2s ease; }
+
+@keyframes fadeIn    { from { opacity: 0 }                    to { opacity: 1 } }
+@keyframes slideUp   { from { transform: translateY(100%) }   to { transform: translateY(0) } }
+@keyframes slideInRight { from { transform: translateX(20px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
+@keyframes popIn     { from { transform: scale(.95); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+
+.modal-wrap { position: fixed; inset: 0; background: rgba(2,8,23,.8); backdrop-filter: blur(4px); z-index: 60; display: flex; align-items: flex-end; padding: 0; animation: fadeIn .15s ease; }
+@media (min-width: 640px) { .modal-wrap { align-items: center; padding: 1rem; } }
+.modal-box { background: #0f172a; border: 1px solid #1e293b; border-radius: 20px 20px 0 0; width: 100%; animation: slideUp .25s cubic-bezier(.32,1,.32,1); }
+@media (min-width: 640px) { .modal-box { border-radius: 16px; max-width: 360px; margin: auto; animation: popIn .2s ease; } }
+
+.day-card { background: #0d1526; border: 1px solid #1a2540; border-radius: 16px; overflow: hidden; }
+.day-card.is-today { border-color: #d97706; }
+.post-pill { border-radius: 10px; padding: 10px 12px; cursor: pointer; transition: opacity .15s; -webkit-user-select: none; user-select: none; }
+.post-pill:active { opacity: .7; }
+
+.grid-cell { background: #0d1526; border-radius: 12px; border: 1px solid #1a2540; min-height: 120px; display: flex; flex-direction: column; }
+.grid-cell.is-today { border-color: #d97706; }
+.grid-cell.is-weekend { background: #0a1020; border-color: #131e34; }
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+.pulse { animation: pulse 1.5s ease-in-out infinite; }
+
+input:focus, select:focus, textarea:focus { outline: none; border-color: rgba(217,119,6,.6) !important; }
+.safe-bottom { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ── SUPABASE CONFIG ───────────────────────────────────────────
+const SUPABASE_URL = "https://clftsvytkusorbxbfoua.supabase.co";
+const SUPABASE_KEY = "sb_publishable_S7r6LtWwnU63kPbpuKrBag_SjozwEbh";
+const TABLE = "calendario";
+
+async function dbGet(key) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?key=eq.${encodeURIComponent(key)}&select=value`, {
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Content-Type": "application/json"
+      }
+    });
+    const data = await res.json();
+    if (data && data.length > 0) return JSON.parse(data[0].value);
+    return null;
+  } catch { return null; }
+}
+
+async function dbSet(key, value) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
+      method: "POST",
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates"
+      },
+      body: JSON.stringify({ key, value: JSON.stringify(value), updated_at: new Date().toISOString() })
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+// ── ESTILOS / CONSTANTES ──────────────────────────────────────
+const TS = {
+  REEL:      { bg:"#2e1f4a", border:"#6d28d9", text:"#c4b5fd", dot:"#8b5cf6", label:"Reel"      },
+  CARROSSEL: { bg:"#2d1f00", border:"#b45309", text:"#fcd34d", dot:"#f59e0b", label:"Carrossel" },
+  FOTO:      { bg:"#0d2e1f", border:"#065f46", text:"#6ee7b7", dot:"#10b981", label:"Foto"      },
+  SERIE:     { bg:"#2d0f22", border:"#9d174d", text:"#fbcfe8", dot:"#ec4899", label:"Série"     },
+  BOOST:     { bg:"#2d0f0f", border:"#991b1b", text:"#fca5a5", dot:"#ef4444", label:"Boost"     },
+  STORIES:   { bg:"#0a1e2d", border:"#075985", text:"#bae6fd", dot:"#0ea5e9", label:"Stories"   },
+};
+const SS = {
+  agendado:    { label:"Agendado",    dot:"#64748b", color:"#94a3b8" },
+  publicado:   { label:"Publicado",   dot:"#10b981", color:"#6ee7b7" },
+  boost_ativo: { label:"Boost ativo", dot:"#ef4444", color:"#fca5a5" },
+  pendente:    { label:"Pendente",    dot:"#f97316", color:"#fdba74" },
+};
+const QL = {
+  alexandre:  { label:"Alexandre", color:"#93c5fd" },
+  vinicius:   { label:"Vinicius",  color:"#67e8f9" },
+  so_carro:   { label:"Só carro",  color:"#94a3b8" },
+  sem_pessoa: { label:"—",         color:"#475569" },
+};
+const TIPO_OPTS = ["REEL","CARROSSEL","FOTO","SERIE","BOOST","STORIES"];
+const QUEM_OPTS = ["alexandre","vinicius","so_carro","sem_pessoa"];
+const DAYS_SHORT = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+const DAYS_FULL  = ["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"];
+const MONTHS     = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+const MONTHS_S   = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+
+function toISO(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function getWeekDays(monday) {
+  return Array.from({length:7},(_,i)=>{ const d=new Date(monday); d.setDate(d.getDate()+i); return d; });
+}
+function getThisMonday() {
+  const d=new Date(), day=d.getDay(), diff=day===0?-6:1-day;
+  d.setDate(d.getDate()+diff); d.setHours(0,0,0,0); return d;
+}
+let _id=0;
+function genId() { return `p_${Date.now()}_${_id++}`; }
+
+function useIsMobile() {
+  const [m, setM] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const h = () => setM(window.innerWidth < 768);
+    window.addEventListener("resize", h);
+    return () => window.removeEventListener("resize", h);
+  }, []);
+  return m;
+}
+
+// ── APP ───────────────────────────────────────────────────────
+function App() {
+  const [loading, setLoading]   = useState(true);
+  const [posts, setPosts]       = useState({});
+  const [offset, setOffset]     = useState(0);
+  const [selected, setSelected] = useState(null);
+  const [detail, setDetail]     = useState(null);
+  const [addModal, setAddModal] = useState(null);
+  const [sync, setSync]         = useState("ok");
+  const [confirmClear, setCC]   = useState(false);
+  const saveTimer = useRef(null);
+  const didLoad   = useRef(false);
+  const isMobile  = useIsMobile();
+
+  // Carga inicial
+  useEffect(() => {
+    (async () => {
+      const [p, o] = await Promise.all([dbGet("posts"), dbGet("offset")]);
+      if (p) setPosts(p);
+      if (o !== null) setOffset(o);
+      setLoading(false);
+    })();
+  }, []);
+
+  // Salvar posts (debounced 900ms)
+  useEffect(() => {
+    if (loading) return;
+    if (!didLoad.current) { didLoad.current = true; return; }
+    setSync("saving");
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      const ok = await dbSet("posts", posts);
+      setSync(ok ? "ok" : "error");
+    }, 900);
+  }, [posts]);
+
+  // Salvar offset
+  useEffect(() => {
+    if (!loading) dbSet("offset", offset);
+  }, [offset]);
+
+  // Semanas
+  const base = getThisMonday();
+  const w1s  = new Date(base); w1s.setDate(w1s.getDate() + offset*14);
+  const w2s  = new Date(w1s);  w2s.setDate(w2s.getDate() + 7);
+  const w1   = getWeekDays(w1s);
+  const w2   = getWeekDays(w2s);
+  const allDays = [...w1, ...w2];
+  const today = toISO(new Date());
+
+  // Sync detail
+  useEffect(() => {
+    if (!selected) return;
+    const p = (posts[selected.date]||[]).find(p=>p.id===selected.postId);
+    if (p) setDetail({...p}); else setSelected(null);
+  }, [selected, posts]);
+
+  const addPost = (date, f) => {
+    const np = { id:genId(), date, tipo:f.tipo||"REEL", quem:f.quem||"sem_pessoa",
+      titulo:f.titulo||"Novo conteúdo", horario:f.horario||"18h", status:"agendado",
+      descricao:"", legenda:"", referencias:[], notas:"" };
+    setPosts(p=>({...p,[date]:[...(p[date]||[]),np]}));
+    setAddModal(null);
+  };
+  const updatePost = u => {
+    setPosts(p=>({...p,[u.date]:(p[u.date]||[]).map(x=>x.id===u.id?{...u}:x)}));
+    setDetail({...u});
+  };
+  const deletePost = (date,id) => {
+    setPosts(p=>({...p,[date]:(p[date]||[]).filter(x=>x.id!==id)}));
+    if (selected?.postId===id) { setSelected(null); setDetail(null); }
+  };
+  const cycleStatus = (date,id) => {
+    const ord=["agendado","publicado","boost_ativo","pendente"];
+    setPosts(p=>({...p,[date]:(p[date]||[]).map(x=>{
+      if(x.id!==id)return x;
+      return{...x,status:ord[(ord.indexOf(x.status)+1)%ord.length]};
+    })}));
+  };
+  const clearAll = () => { setPosts({}); setSelected(null); setDetail(null); setCC(false); };
+
+  const total = allDays.reduce((a,d)=>a+(posts[toISO(d)]||[]).length,0);
+  const pub   = allDays.reduce((a,d)=>a+(posts[toISO(d)]||[]).filter(p=>p.status==="publicado").length,0);
+
+  const fmtRange = days => {
+    const s=days[0],e=days[days.length-1];
+    if (s.getMonth()===e.getMonth()) return `${s.getDate()}–${e.getDate()} ${MONTHS_S[s.getMonth()]}`;
+    return `${s.getDate()} ${MONTHS_S[s.getMonth()]} – ${e.getDate()} ${MONTHS_S[e.getMonth()]}`;
+  };
+
+  const openDetail  = (date,id) => setSelected({date,postId:id});
+  const closeDetail = () => { setSelected(null); setDetail(null); };
+
+  if (loading) return (
+    <div style={{minHeight:"100vh",background:"#020817",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{width:48,height:48,background:"#f59e0b",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,color:"#020817",fontSize:14,margin:"0 auto 16px"}}>SM</div>
+        <div style={{color:"#94a3b8",fontSize:15}}>Carregando...</div>
+        <div style={{color:"#334155",fontSize:11,marginTop:4,fontFamily:"DM Mono,monospace"}}>buscando dados na nuvem</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{minHeight:"100vh",background:"#020817",color:"#e2e8f0",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+
+      {/* HEADER */}
+      <header style={{position:"sticky",top:0,zIndex:30,background:"rgba(2,8,23,.95)",backdropFilter:"blur(12px)",borderBottom:"1px solid #1e293b"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+            <div style={{width:34,height:34,background:"#f59e0b",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,color:"#020817",fontSize:12,flexShrink:0}}>SM</div>
+            <div style={{minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:14,lineHeight:"1.2",whiteSpace:"nowrap"}}>San Marino</div>
+              <div style={{fontSize:10,color:"#475569",fontFamily:"DM Mono,monospace",whiteSpace:"nowrap"}}>
+                {fmtRange(w1)} · {fmtRange(w2)}
+              </div>
+            </div>
+          </div>
+
+          <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+            {/* Navegação */}
+            <div style={{display:"flex",alignItems:"center",background:"#0d1526",border:"1px solid #1e293b",borderRadius:10,overflow:"hidden"}}>
+              <button onClick={()=>{setOffset(o=>o-1);closeDetail();}}
+                style={{width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",color:"#94a3b8",background:"none",border:"none",cursor:"pointer",fontSize:16}}>‹</button>
+              <button onClick={()=>{setOffset(0);closeDetail();}}
+                style={{padding:"0 8px",height:32,color:offset===0?"#f59e0b":"#94a3b8",background:"none",border:"none",cursor:"pointer",fontSize:11,fontFamily:"DM Mono,monospace",minWidth:46,textAlign:"center"}}>
+                {offset===0?"Agora":offset>0?`+${offset*2}s`:`${offset*2}s`}
+              </button>
+              <button onClick={()=>{setOffset(o=>o+1);closeDetail();}}
+                style={{width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",color:"#94a3b8",background:"none",border:"none",cursor:"pointer",fontSize:16}}>›</button>
+            </div>
+
+            <div style={{fontSize:11,fontFamily:"DM Mono,monospace",color:"#475569",display:"flex",gap:6}}>
+              <span>{total}</span>
+              <span style={{color:"#10b981"}}>{pub}✓</span>
+            </div>
+
+            {/* Sync */}
+            <div title={sync==="ok"?"Salvo na nuvem":sync==="saving"?"Salvando...":"Erro ao salvar"}
+              style={{width:7,height:7,borderRadius:"50%",flexShrink:0,
+                background:sync==="ok"?"#10b981":sync==="saving"?"#f59e0b":"#ef4444"}}
+              className={sync==="saving"?"pulse":""}/>
+
+            {/* Clear */}
+            {!confirmClear ? (
+              <button onClick={()=>setCC(true)}
+                style={{fontSize:10,color:"#1e293b",background:"none",border:"none",cursor:"pointer",fontFamily:"DM Mono,monospace",padding:"0 2px"}}>limpar</button>
+            ) : (
+              <div style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={{fontSize:10,color:"#f87171",fontFamily:"DM Mono,monospace"}}>Tem certeza?</span>
+                <button onClick={clearAll} style={{fontSize:10,fontWeight:700,color:"#ef4444",background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:5,padding:"3px 8px",cursor:"pointer"}}>Sim</button>
+                <button onClick={()=>setCC(false)} style={{fontSize:10,color:"#94a3b8",background:"none",border:"none",cursor:"pointer"}}>Não</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Legenda */}
+        <div style={{overflowX:"auto",display:"flex",gap:6,padding:"0 16px 10px",scrollbarWidth:"none"}}>
+          {Object.entries(TS).map(([tipo,s])=>(
+            <div key={tipo} style={{display:"flex",alignItems:"center",gap:5,padding:"3px 10px",borderRadius:20,border:`1px solid ${s.border}`,background:s.bg,whiteSpace:"nowrap",flexShrink:0}}>
+              <div style={{width:6,height:6,borderRadius:"50%",background:s.dot}}/>
+              <span style={{fontSize:9,fontWeight:700,color:s.text,letterSpacing:"0.05em"}}>{s.label}</span>
+            </div>
+          ))}
+        </div>
+      </header>
+
+      {/* BODY */}
+      <div style={{display:"flex",alignItems:"flex-start"}}>
+        <div style={{flex:1,minWidth:0,padding:isMobile?"12px 12px 80px":"16px 16px 40px"}}>
+          {isMobile ? (
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <WeekHeaderMobile label="Semana 1" days={w1}/>
+              {w1.map(d=>(
+                <DayCardMobile key={toISO(d)} day={d} posts={posts[toISO(d)]||[]} isToday={toISO(d)===today}
+                  selected={selected} onSelectPost={openDetail}
+                  onAddPost={()=>setAddModal(toISO(d))} onCycleStatus={cycleStatus}/>
+              ))}
+              <WeekHeaderMobile label="Semana 2" days={w2}/>
+              {w2.map(d=>(
+                <DayCardMobile key={toISO(d)} day={d} posts={posts[toISO(d)]||[]} isToday={toISO(d)===today}
+                  selected={selected} onSelectPost={openDetail}
+                  onAddPost={()=>setAddModal(toISO(d))} onCycleStatus={cycleStatus}/>
+              ))}
+            </div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:20}}>
+              <WeekGrid label="Semana 1" days={w1} posts={posts} today={today} selected={selected}
+                onSelectPost={openDetail} onAddPost={d=>setAddModal(d)} onCycleStatus={cycleStatus}/>
+              <div style={{borderTop:"1px solid #1e293b",margin:"4px 0"}}/>
+              <WeekGrid label="Semana 2" days={w2} posts={posts} today={today} selected={selected}
+                onSelectPost={openDetail} onAddPost={d=>setAddModal(d)} onCycleStatus={cycleStatus}/>
+            </div>
+          )}
+        </div>
+
+        {!isMobile && selected && detail && (
+          <div className="sidebar-panel">
+            <DetailPanel post={detail} onUpdate={updatePost} onClose={closeDetail}
+              onDelete={()=>deletePost(detail.date,detail.id)}
+              onCycleStatus={()=>cycleStatus(detail.date,detail.id)}/>
+          </div>
+        )}
+      </div>
+
+      {isMobile && selected && detail && (
+        <>
+          <div className="sheet-overlay" onClick={closeDetail}/>
+          <div className="sheet-panel">
+            <div className="sheet-drag"/>
+            <DetailPanel post={detail} onUpdate={updatePost} onClose={closeDetail}
+              onDelete={()=>deletePost(detail.date,detail.id)}
+              onCycleStatus={()=>cycleStatus(detail.date,detail.id)} isMobile/>
+          </div>
+        </>
+      )}
+
+      {addModal && <AddModal date={addModal} onAdd={d=>addPost(addModal,d)} onClose={()=>setAddModal(null)}/>}
+    </div>
+  );
+}
+
+// ── WEEK HEADER MOBILE ────────────────────────────────────────
+function WeekHeaderMobile({ label, days }) {
+  const s=days[0],e=days[days.length-1];
+  const range=`${s.getDate()} ${MONTHS_S[s.getMonth()]} – ${e.getDate()} ${MONTHS_S[e.getMonth()]}`;
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 4px 2px"}}>
+      <div style={{width:3,height:16,background:"#f59e0b",borderRadius:2,flexShrink:0}}/>
+      <span style={{fontSize:11,fontWeight:700,color:"#f59e0b",letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:"DM Mono,monospace"}}>{label}</span>
+      <span style={{fontSize:10,color:"#334155",fontFamily:"DM Mono,monospace"}}>{range}</span>
+    </div>
+  );
+}
+
+// ── DAY CARD MOBILE ───────────────────────────────────────────
+function DayCardMobile({ day, posts, isToday, selected, onSelectPost, onAddPost, onCycleStatus }) {
+  const iso = toISO(day);
+  const isWeekend = day.getDay()===0||day.getDay()===6;
+  return (
+    <div className="day-card" style={isToday?{borderColor:"#d97706"}:isWeekend?{background:"#0a1020",borderColor:"#111827"}:{}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px 8px",borderBottom:"1px solid #1a2540"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",
+            background:isToday?"#f59e0b":"transparent",
+            color:isToday?"#020817":isWeekend?"#334155":"#64748b",
+            fontWeight:isToday?700:600,fontSize:15,flexShrink:0}}>{day.getDate()}</div>
+          <div>
+            <div style={{fontSize:13,fontWeight:600,color:isWeekend?"#334155":"#94a3b8"}}>{DAYS_FULL[day.getDay()]}</div>
+            {isToday&&<div style={{fontSize:9,color:"#f59e0b",fontFamily:"DM Mono,monospace",letterSpacing:"0.05em",textTransform:"uppercase",marginTop:1}}>Hoje</div>}
+          </div>
+        </div>
+        <button onClick={onAddPost}
+          style={{width:32,height:32,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(245,158,11,.08)",border:"1px solid rgba(245,158,11,.2)",color:"#f59e0b",fontSize:20,cursor:"pointer",lineHeight:1}}>+</button>
+      </div>
+      {posts.length > 0 ? (
+        <div style={{padding:"8px 10px",display:"flex",flexDirection:"column",gap:6}}>
+          {posts.map(post => {
+            const ts=TS[post.tipo]||TS.FOTO;
+            const ss=SS[post.status]||SS.agendado;
+            const qs=QL[post.quem]||QL.sem_pessoa;
+            const isSel=selected?.postId===post.id;
+            return (
+              <div key={post.id} className="post-pill" onClick={()=>onSelectPost(iso,post.id)}
+                style={{background:ts.bg,border:`1.5px solid ${isSel?"#f59e0b":ts.border}`,boxShadow:isSel?"0 0 0 1px rgba(245,158,11,.3)":"none"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:7,minWidth:0}}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:ts.dot,flexShrink:0}}/>
+                    <span style={{fontSize:10,fontWeight:700,color:ts.text,letterSpacing:"0.06em",textTransform:"uppercase",flexShrink:0}}>{post.tipo}</span>
+                    <span style={{fontSize:12,color:"#cbd5e1",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{post.titulo}</span>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                    {post.quem!=="sem_pessoa"&&<span style={{fontSize:10,color:qs.color,flexShrink:0}}>{qs.label}</span>}
+                    <span style={{fontSize:10,color:"#475569",fontFamily:"DM Mono,monospace"}}>{post.horario}</span>
+                    <div onClick={e=>{e.stopPropagation();onCycleStatus(iso,post.id);}} title={ss.label}
+                      style={{width:10,height:10,borderRadius:"50%",background:ss.dot,cursor:"pointer",flexShrink:0}}/>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{padding:"12px 14px"}}>
+          <button onClick={onAddPost} style={{fontSize:11,color:"#1e293b",background:"none",border:"none",cursor:"pointer",padding:0}}>+ Adicionar conteúdo</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── WEEK GRID DESKTOP ─────────────────────────────────────────
+function WeekGrid({ label, days, posts, today, selected, onSelectPost, onAddPost, onCycleStatus }) {
+  const s=days[0],e=days[days.length-1];
+  const range=`${s.getDate()} ${MONTHS_S[s.getMonth()]} – ${e.getDate()} ${MONTHS_S[e.getMonth()]}`;
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+        <div style={{width:3,height:14,background:"#f59e0b",borderRadius:2}}/>
+        <span style={{fontSize:11,fontWeight:700,color:"#f59e0b",letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:"DM Mono,monospace"}}>{label}</span>
+        <span style={{fontSize:10,color:"#334155",fontFamily:"DM Mono,monospace"}}>{range}</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6}}>
+        {days.map(d=>{
+          const iso=toISO(d);
+          const dp=posts[iso]||[];
+          const isToday=iso===today;
+          const isWE=d.getDay()===0||d.getDay()===6;
+          return (
+            <div key={iso} className={`grid-cell${isToday?" is-today":""}${isWE?" is-weekend":""}`}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 8px 6px",borderBottom:"1px solid #1a2540"}}>
+                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                  <div style={{width:22,height:22,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",
+                    background:isToday?"#f59e0b":"transparent",
+                    color:isToday?"#020817":isWE?"#1e293b":"#475569",fontWeight:700,fontSize:11}}>{d.getDate()}</div>
+                  <span style={{fontSize:8,fontWeight:700,color:isWE?"#1e293b":"#334155",letterSpacing:"0.06em",textTransform:"uppercase"}}>{DAYS_SHORT[d.getDay()]}</span>
+                </div>
+                <button onClick={()=>onAddPost(iso)}
+                  style={{width:18,height:18,borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",background:"none",border:"none",color:"#1e293b",cursor:"pointer",fontSize:14,lineHeight:1}}
+                  onMouseEnter={e=>{e.target.style.color="#f59e0b";e.target.style.background="rgba(245,158,11,.1)";}}
+                  onMouseLeave={e=>{e.target.style.color="#1e293b";e.target.style.background="none";}}>+</button>
+              </div>
+              <div style={{flex:1,padding:"4px",display:"flex",flexDirection:"column",gap:3}}>
+                {dp.map(post=>{
+                  const ts=TS[post.tipo]||TS.FOTO;
+                  const ss=SS[post.status]||SS.agendado;
+                  const qs=QL[post.quem]||QL.sem_pessoa;
+                  const isSel=selected?.postId===post.id;
+                  return (
+                    <div key={post.id} onClick={()=>onSelectPost(iso,post.id)}
+                      style={{background:ts.bg,border:`1px solid ${isSel?"#f59e0b":ts.border}`,borderRadius:7,padding:"6px 7px",cursor:"pointer",transition:"opacity .15s",outline:isSel?"1px solid rgba(245,158,11,.3)":"none"}}
+                      onMouseEnter={e=>e.currentTarget.style.opacity=".8"}
+                      onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+                      <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:2}}>
+                        <div style={{width:5,height:5,borderRadius:"50%",background:ts.dot,flexShrink:0}}/>
+                        <span style={{fontSize:8,fontWeight:700,color:ts.text,letterSpacing:"0.06em",textTransform:"uppercase"}}>{post.tipo}</span>
+                        {post.quem!=="sem_pessoa"&&<span style={{fontSize:8,color:qs.color,marginLeft:"auto"}}>{qs.label.slice(0,3)}</span>}
+                      </div>
+                      <div style={{fontSize:9,color:"#94a3b8",lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{post.titulo}</div>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:3}}>
+                        <span style={{fontSize:8,color:"#334155",fontFamily:"DM Mono,monospace"}}>{post.horario}</span>
+                        <div onClick={e=>{e.stopPropagation();onCycleStatus(iso,post.id);}} title={ss.label}
+                          style={{width:5,height:5,borderRadius:"50%",background:ss.dot,cursor:"pointer"}}/>
+                      </div>
+                    </div>
+                  );
+                })}
+                {dp.length===0&&(
+                  <div style={{flex:1,display:"flex",alignItems:"flex-end",justifyContent:"center",paddingBottom:6}}>
+                    <button onClick={()=>onAddPost(iso)} style={{fontSize:8,color:"#1a2540",background:"none",border:"none",cursor:"pointer"}}>+ add</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── DETAIL PANEL ──────────────────────────────────────────────
+function DetailPanel({ post, onUpdate, onClose, onDelete, onCycleStatus, isMobile }) {
+  const [lp, setLp]       = useState({...post});
+  const [newRef, setNR]   = useState({label:"",url:""});
+  const [addingRef, setAR]= useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(()=>{ setLp({...post}); setSaved(false); }, [post.id]);
+
+  const ts=TS[lp.tipo]||TS.FOTO;
+  const ss=SS[lp.status]||SS.agendado;
+  const set=(k,v)=>setLp(p=>({...p,[k]:v}));
+  const save=()=>{ onUpdate({...lp}); setSaved(true); setTimeout(()=>setSaved(false),1500); };
+  const addRef=()=>{
+    if(!newRef.url)return;
+    setLp(p=>({...p,referencias:[...(p.referencias||[]),{...newRef,id:genId()}]}));
+    setNR({label:"",url:""}); setAR(false);
+  };
+  const removeRef=id=>setLp(p=>({...p,referencias:(p.referencias||[]).filter(r=>r.id!==id)}));
+  const d=new Date(lp.date+"T12:00:00");
+  const dl=`${DAYS_FULL[d.getDay()]}, ${d.getDate()} de ${MONTHS[d.getMonth()]}`;
+
+  const inputSt={background:"rgba(13,21,38,.8)",border:"1px solid #1e293b",color:"#e2e8f0",borderRadius:10,padding:"10px 12px",width:"100%",fontSize:13,fontFamily:"'DM Sans',system-ui,sans-serif"};
+  const labelSt={fontSize:9,fontWeight:700,color:"#475569",letterSpacing:"0.1em",textTransform:"uppercase",fontFamily:"DM Mono,monospace",display:"block",marginBottom:6};
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      <div style={{padding:"14px 16px",borderBottom:"1px solid #1e293b",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+          <div style={{width:10,height:10,borderRadius:"50%",background:ts.dot,flexShrink:0}}/>
+          <span style={{fontSize:11,fontWeight:700,color:ts.text,letterSpacing:"0.08em",textTransform:"uppercase"}}>{lp.tipo}</span>
+          <span style={{fontSize:11,color:"#334155",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{dl}</span>
+        </div>
+        <button onClick={onClose}
+          style={{width:30,height:30,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(255,255,255,.05)",border:"1px solid #1e293b",color:"#94a3b8",cursor:"pointer",fontSize:16,flexShrink:0}}>×</button>
+      </div>
+
+      <div style={{flex:1,overflowY:"auto",padding:16,display:"flex",flexDirection:"column",gap:16}}>
+        <div>
+          <label style={labelSt}>Título</label>
+          <input type="text" value={lp.titulo} onChange={e=>set("titulo",e.target.value)} style={inputSt} placeholder="Título do conteúdo"/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div>
+            <label style={labelSt}>Tipo</label>
+            <select value={lp.tipo} onChange={e=>set("tipo",e.target.value)} style={{...inputSt,cursor:"pointer"}}>
+              {TIPO_OPTS.map(t=><option key={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelSt}>Responsável</label>
+            <select value={lp.quem} onChange={e=>set("quem",e.target.value)} style={{...inputSt,cursor:"pointer"}}>
+              {QUEM_OPTS.map(q=><option key={q} value={q}>{QL[q].label}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div>
+            <label style={labelSt}>Horário</label>
+            <input type="text" value={lp.horario} onChange={e=>set("horario",e.target.value)} style={inputSt} placeholder="18h"/>
+          </div>
+          <div>
+            <label style={labelSt}>Status</label>
+            <button onClick={onCycleStatus} style={{...inputSt,cursor:"pointer",display:"flex",alignItems:"center",gap:8,color:ss.color,justifyContent:"center",border:`1px solid ${ss.dot}40`,background:`${ss.dot}15`}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:ss.dot,flexShrink:0}}/>{ss.label}
+            </button>
+          </div>
+        </div>
+        <div>
+          <label style={labelSt}>Descrição / Briefing</label>
+          <textarea rows={isMobile?3:4} value={lp.descricao} onChange={e=>set("descricao",e.target.value)}
+            style={{...inputSt,lineHeight:1.6}} placeholder="Objetivo, tom, ângulos, informações importantes..."/>
+        </div>
+        <div>
+          <label style={labelSt}>Legenda / Caption</label>
+          <textarea rows={isMobile?4:5} value={lp.legenda} onChange={e=>set("legenda",e.target.value)}
+            style={{...inputSt,fontFamily:"DM Mono,monospace",fontSize:12,lineHeight:1.6}} placeholder="Legenda, CTAs, hashtags..."/>
+        </div>
+        <div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <label style={{...labelSt,marginBottom:0}}>Referências</label>
+            <button onClick={()=>setAR(a=>!a)} style={{fontSize:11,fontWeight:700,color:"#f59e0b",background:"none",border:"none",cursor:"pointer"}}>+ Link</button>
+          </div>
+          {addingRef&&(
+            <div style={{background:"#0d1526",border:"1px solid #1e293b",borderRadius:10,padding:12,marginBottom:10,display:"flex",flexDirection:"column",gap:8}}>
+              <input type="text" value={newRef.label} onChange={e=>setNR(r=>({...r,label:e.target.value}))}
+                placeholder="Nome / descrição (opcional)" style={{...inputSt,fontSize:12}}/>
+              <input type="url" value={newRef.url} onChange={e=>setNR(r=>({...r,url:e.target.value}))}
+                placeholder="https://..." style={{...inputSt,fontSize:12}}/>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={addRef} style={{flex:1,padding:"9px",borderRadius:8,background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",color:"#fcd34d",fontWeight:700,fontSize:12,cursor:"pointer"}}>Salvar</button>
+                <button onClick={()=>{setAR(false);setNR({label:"",url:""}); }}
+                  style={{padding:"9px 14px",borderRadius:8,background:"#1e293b",border:"1px solid #334155",color:"#94a3b8",cursor:"pointer",fontSize:12}}>✕</button>
+              </div>
+            </div>
+          )}
+          {(lp.referencias||[]).length===0&&!addingRef&&(
+            <div style={{fontSize:11,color:"#1e293b",fontStyle:"italic"}}>Nenhum link adicionado.</div>
+          )}
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {(lp.referencias||[]).map(ref=>(
+              <div key={ref.id} style={{display:"flex",alignItems:"flex-start",gap:10,background:"#0d1526",border:"1px solid #1a2540",borderRadius:10,padding:"10px 12px"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  {ref.label&&<div style={{fontSize:12,color:"#cbd5e1",fontWeight:500,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ref.label}</div>}
+                  <a href={ref.url} target="_blank" rel="noopener noreferrer"
+                    style={{fontSize:10,color:"#f59e0b",display:"block",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"DM Mono,monospace"}}>{ref.url}</a>
+                </div>
+                <button onClick={()=>removeRef(ref.id)} style={{color:"#334155",background:"none",border:"none",cursor:"pointer",fontSize:14,flexShrink:0}}>✕</button>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label style={labelSt}>Notas internas</label>
+          <textarea rows={3} value={lp.notas} onChange={e=>set("notas",e.target.value)}
+            style={{...inputSt,color:"#64748b",fontStyle:"italic",lineHeight:1.6}} placeholder="Pendências, aprovações, ajustes..."/>
+        </div>
+      </div>
+
+      <div className="safe-bottom" style={{padding:"12px 16px",borderTop:"1px solid #1e293b",display:"flex",gap:8,flexShrink:0}}>
+        <button onClick={onDelete}
+          style={{padding:"10px 12px",borderRadius:10,background:"none",border:"1px solid rgba(239,68,68,.2)",color:"rgba(239,68,68,.5)",fontSize:12,cursor:"pointer"}}>Excluir</button>
+        <button onClick={save}
+          style={{flex:1,padding:"10px",borderRadius:10,fontWeight:700,fontSize:13,cursor:"pointer",border:"none",
+            background:saved?"rgba(16,185,129,.15)":"rgba(245,158,11,.15)",
+            color:saved?"#6ee7b7":"#fcd34d"}}>
+          {saved?"✓ Salvo!":"Salvar alterações"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── MODAL ADICIONAR ───────────────────────────────────────────
+function AddModal({ date, onAdd, onClose }) {
+  const [form, setForm] = useState({tipo:"REEL",quem:"alexandre",titulo:"",horario:"18h"});
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const d=new Date(date+"T12:00:00");
+  const label=`${DAYS_FULL[d.getDay()]}, ${d.getDate()} de ${MONTHS[d.getMonth()]}`;
+  const inputSt={background:"#0d1526",border:"1px solid #1e293b",color:"#e2e8f0",borderRadius:10,padding:"12px 14px",width:"100%",fontSize:14,fontFamily:"'DM Sans',system-ui,sans-serif"};
+  const labelSt={fontSize:9,fontWeight:700,color:"#475569",letterSpacing:"0.1em",textTransform:"uppercase",fontFamily:"DM Mono,monospace",display:"block",marginBottom:6};
+  return (
+    <div className="modal-wrap" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div className="modal-box">
+        <div style={{padding:"16px 18px",borderBottom:"1px solid #1e293b",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:"#f59e0b",letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:"DM Mono,monospace"}}>Novo conteúdo</div>
+            <div style={{fontSize:12,color:"#475569",marginTop:2}}>{label}</div>
+          </div>
+          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(255,255,255,.05)",border:"1px solid #1e293b",color:"#94a3b8",cursor:"pointer",fontSize:16}}>×</button>
+        </div>
+        <div style={{padding:"16px 18px",display:"flex",flexDirection:"column",gap:14}}>
+          <div>
+            <label style={labelSt}>Título *</label>
+            <input type="text" value={form.titulo} onChange={e=>set("titulo",e.target.value)} autoFocus
+              style={inputSt} placeholder="Ex: Papo de Bar Ep. 1"
+              onKeyDown={e=>e.key==="Enter"&&form.titulo.trim()&&onAdd(form)}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div>
+              <label style={labelSt}>Tipo</label>
+              <select value={form.tipo} onChange={e=>set("tipo",e.target.value)} style={inputSt}>
+                {TIPO_OPTS.map(t=><option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelSt}>Quem</label>
+              <select value={form.quem} onChange={e=>set("quem",e.target.value)} style={inputSt}>
+                {QUEM_OPTS.map(q=><option key={q} value={q}>{QL[q].label}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label style={labelSt}>Horário</label>
+            <input type="text" value={form.horario} onChange={e=>set("horario",e.target.value)} style={inputSt} placeholder="18h"/>
+          </div>
+        </div>
+        <div className="safe-bottom" style={{padding:"0 18px 18px"}}>
+          <button onClick={()=>form.titulo.trim()&&onAdd(form)} disabled={!form.titulo.trim()}
+            style={{width:"100%",padding:"14px",borderRadius:12,background:form.titulo.trim()?"#f59e0b":"#1e293b",color:form.titulo.trim()?"#020817":"#334155",fontWeight:700,fontSize:14,border:"none",cursor:form.titulo.trim()?"pointer":"not-allowed",transition:"background .2s"}}>
+            Adicionar conteúdo
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
